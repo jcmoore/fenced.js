@@ -1,16 +1,20 @@
-export function libZone({ fenceTable = new Map(), fenceStack = [] }) {
+export function libZone({
+  fenceTable = new Map(),
+  fenceStack = [],
+  labelledStacks = new Map()
+} = {}) {
   const API = {
-    zone(task) {
+    zone(label, task) {
       const count = arguments.length;
 
       const depth = pushFence(
-        Array.isArray(this) ? new FencedRegion(this) : null
+        Array.isArray(this) ? new FencedRegion(label, this) : null
       );
 
       const value = "function" === typeof task ? task() : undefined;
 
-      for (let index = 1; index < count; index += 1) {
-        notify.call(this, value, arguments[index]);
+      for (let index = 2; index < count; index += 1) {
+        pipeline(value, arguments[index]);
       }
 
       if (countFence() > depth) {
@@ -44,7 +48,21 @@ export function libZone({ fenceTable = new Map(), fenceStack = [] }) {
     }
   };
 
+  function eachPush(value) {
+    this.push(value);
+  }
+
   Object.assign(API, {
+    copyKeys(label, skip = 0) {
+      const stack = labelledStacks.get(label) || [];
+      const result = [];
+
+      if (skip < stack.length) {
+        stack[stack.length - 1 - skip].keys.forEach(eachPush, result);
+      }
+
+      return result;
+    },
     readData(key) {
       const region = peekFence();
       return region ? region.data.get(key) : undefined;
@@ -93,25 +111,27 @@ export function libZone({ fenceTable = new Map(), fenceStack = [] }) {
     return fenceStack.length;
   }
   function pushFence(region) {
-    region.keys.forEach(addIndex, region);
+    region.keys.forEach(addKeyIndex, region);
+    addLabelIndex(region);
     return fenceStack.push(region);
   }
   function popFence() {
     const region = fenceStack.pop();
-    region.keys.forEach(dropIndex, region);
+    region.keys.forEach(dropKeyIndex, region);
+    dropLabelIndex(region);
     return region;
   }
   function peekFence() {
     return fenceStack.length ? fenceStack[fenceStack.length - 1] : null;
   }
 
-  function addIndex(key) {
+  function addKeyIndex(key) {
     const region = this;
     const index =
       fenceTable.get(key) || fenceTable.set(key, new Map()).get(key);
     index.set(region, key);
   }
-  function dropIndex(key) {
+  function dropKeyIndex(key) {
     const region = this;
     const index = fenceTable.get(key);
     if (index) {
@@ -122,10 +142,38 @@ export function libZone({ fenceTable = new Map(), fenceStack = [] }) {
     }
   }
 
+  function addLabelIndex(region) {
+    const id = region.label;
+    const stack = labelledStacks.get(id) || labelledStacks.set(id, []).get(id);
+    stack.push(region);
+  }
+  function dropLabelIndex(region) {
+    const id = region.label;
+    const stack = labelledStacks.get(id);
+    let at = stack.length - 1;
+
+    if (at < 0 || stack[at] !== region) {
+      at = stack.indexOf(region);
+    }
+
+    if (stack && at > -1) {
+      if (at === stack.length - 1) {
+        stack.pop();
+      } else {
+        stack.splice(at, 1);
+      }
+
+      if (!stack.length) {
+        labelledStacks.delete(id);
+      }
+    }
+  }
+
   class FencedRegion {
-    constructor(options = []) {
+    constructor(label, options = []) {
       const count = Array.isArray(options) ? options.length : 0;
 
+      this.label = label;
       this.keys = new Set();
       this.data = new Map();
 
@@ -159,16 +207,19 @@ export function libZone({ fenceTable = new Map(), fenceStack = [] }) {
     box(value) {
       return [value];
     },
-    unpack(value) {
+    unpack(wrapped) {
       const count = arguments.length;
-      let result = value;
+      let result = undefined;
+      let value = wrapped;
 
-      if (Array.isArray(value)) {
-        result = value.length ? value[0] : undefined;
+      if (Array.isArray(wrapped)) {
+        value = wrapped.length ? wrapped[0] : undefined;
       }
 
+      result = value;
+
       for (let index = 1; index < count; index += 1) {
-        result = pipeline.call(this, result, arguments[index]);
+        result = pipeline(value, arguments[index]);
       }
 
       return result;
@@ -193,18 +244,4 @@ export function pipeline(value, handler) {
   }
 
   return result;
-}
-
-export function notify(value, handler) {
-  const count = Array.isArray(handler) ? handler.length : 0;
-
-  for (let index = 0; index < count; index += 1) {
-    notify.call(this, value, handler[index]);
-  }
-
-  if ("function" === typeof handler) {
-    handler.call(this, value);
-  }
-
-  return value;
 }

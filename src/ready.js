@@ -14,11 +14,13 @@ export function libReady({
   // fence = zone,
   design = getZone,
   KEYS: { READY_AND_WAITING = KEYS.READY_AND_WAITING } = {}
-}) {
+} = {}) {
   const API = {
-    zoneReady: design({
-      keys: Object.keys(KEYS).map(name => KEYS[name])
-    })
+    zoneReady: design([
+      {
+        keys: Object.keys(KEYS).map(name => KEYS[name])
+      }
+    ])
   };
 
   function eachPush(value) {
@@ -47,7 +49,8 @@ export function libReady({
 
     untilReady(generator) {
       const count = arguments.length;
-      const iterator = generator();
+      const iterator = generator.call(this);
+      let result = undefined;
       let value = undefined;
       let done = false;
 
@@ -62,8 +65,10 @@ export function libReady({
         }
       } while (!done);
 
+      result = value;
+
       for (let index = 1; index < count; index += 1) {
-        result = pipeline.call(this, result, arguments[index]);
+        result = pipeline(value, arguments[index]);
       }
 
       return result;
@@ -96,4 +101,4 @@ export function libReady({
   return Object.assign({}, API);
 }
 
-export const { untilReady, ready, getReady } = libReady();
+export const { waiting, untilReady, ready, getReady } = libReady();
